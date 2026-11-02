@@ -1,0 +1,1358 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>JARVIS</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&display=swap">
+<style>
+/* Layout: one-screen holographic HUD. Status rail left, arc-reactor core center, comms log right, command bar bottom. */
+:root{
+  --bg:#02070c;
+  --bg-2:#06131d;
+  --hud:#4fd8ff;
+  --hud-rgb:79,216,255;
+  --text:#cdeefb;
+  --muted:#6d93a6;
+  --warn:#ffb547;
+  --alert:#ff4d5e;
+  --font-display:"Rajdhani","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --font-data:"Share Tech Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+  color-scheme:dark;
+}
+html{height:100%;box-sizing:border-box;background:var(--bg)}
+*,*::before,*::after{box-sizing:border-box}
+[hidden]{display:none!important}
+body{
+  height:100%;margin:0;overflow:hidden;
+  background:radial-gradient(ellipse at 50% 45%,var(--bg-2) 0%,var(--bg) 70%);
+  background-color:var(--bg);
+  color:var(--text);font-family:var(--font-display);font-size:16px;
+  display:grid;grid-template-rows:auto minmax(0,1fr) auto;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+}
+body::after{ /* scanlines */
+  content:"";position:fixed;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(0deg,rgba(255,255,255,.018) 0 1px,transparent 1px 3px);
+}
+.hud-c{color:var(--hud)}
+header{
+  display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding-block:12px;border-bottom:1px solid rgba(var(--hud-rgb),.18);
+  font-family:var(--font-data);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);
+}
+header .brand{font-family:var(--font-display);font-weight:700;font-size:18px;letter-spacing:.32em;color:var(--hud)}
+header .right{display:flex;gap:18px;align-items:center;font-variant-numeric:tabular-nums}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--muted);margin-right:7px;vertical-align:1px}
+.dot.on{background:var(--hud);box-shadow:0 0 8px var(--hud)}
+.dot.warn{background:var(--warn);box-shadow:0 0 8px var(--warn)}
+
+main{display:grid;grid-template-columns:240px minmax(0,1fr) 360px;gap:20px;min-height:0;padding-block:14px}
+.rail{display:flex;flex-direction:column;gap:14px;min-height:0;overflow-y:auto}
+.panel{
+  border:1px solid rgba(var(--hud-rgb),.22);
+  background:linear-gradient(180deg,rgba(var(--hud-rgb),.06),rgba(var(--hud-rgb),.015));
+  clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px));
+  padding:12px 14px;
+}
+.panel h2{
+  margin:0 0 10px;font-family:var(--font-data);font-weight:400;font-size:11px;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--hud);display:flex;justify-content:space-between
+}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:5px 12px;font-family:var(--font-data);font-size:12px;font-variant-numeric:tabular-nums}
+.kv dt{color:var(--muted)} .kv dd{margin:0;text-align:right;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar{height:3px;background:rgba(var(--hud-rgb),.12);margin-top:4px;grid-column:1/-1}
+.bar i{display:block;height:100%;background:var(--hud);box-shadow:0 0 6px var(--hud);transition:width .6s}
+#timers{display:flex;flex-direction:column;gap:8px;font-family:var(--font-data);font-size:13px}
+#timers .t{display:flex;justify-content:space-between;gap:10px;font-variant-numeric:tabular-nums}
+#timers .t b{font-weight:400;color:var(--hud)}
+#timers .empty{color:var(--muted);font-size:12px}
+.field{display:flex;flex-direction:column;gap:6px;font-family:var(--font-data);font-size:11px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase}
+.field input,.field select{
+  font:500 15px var(--font-display);color:var(--text);background:rgba(0,0,0,.35);
+  border:1px solid rgba(var(--hud-rgb),.25);padding:6px 8px;outline:none;letter-spacing:0;text-transform:none
+}
+.field input:focus,.field select:focus{border-color:var(--hud)}
+.hint{font-family:var(--font-data);font-size:11.5px;line-height:1.6;color:var(--muted)}
+.hint q{color:var(--text);quotes:"\201C" "\201D"}
+
+.core{position:relative;min-height:0;min-width:0}
+#hud{position:absolute;inset:0;width:100%;height:100%;display:block}
+#subtitle{
+  position:absolute;left:50%;bottom:4%;transform:translateX(-50%);width:min(92%,640px);
+  text-align:center;font-size:clamp(16px,2vw,21px);font-weight:500;line-height:1.35;color:var(--text);
+  text-shadow:0 0 12px rgba(var(--hud-rgb),.5);min-height:2.7em;text-wrap:balance
+}
+
+.log{display:flex;flex-direction:column;min-height:0}
+#log{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding-right:4px;scrollbar-width:thin;scrollbar-color:rgba(var(--hud-rgb),.35) transparent}
+.msg{display:flex;flex-direction:column;gap:3px;min-width:0}
+.msg .who{font-family:var(--font-data);font-size:10.5px;letter-spacing:.2em;color:var(--muted)}
+.msg .txt{font-size:16px;line-height:1.45;overflow-wrap:anywhere}
+.msg.j .who{color:var(--hud)}
+.msg.sys .txt{font-family:var(--font-data);font-size:12px;color:var(--muted)}
+.msg.sys .txt b{color:var(--hud);font-weight:400}
+.msg.err .txt{color:var(--warn)}
+.msg a{color:var(--hud)}
+
+footer{padding-block:12px 14px;border-top:1px solid rgba(var(--hud-rgb),.18)}
+header,main,footer{position:relative;z-index:2}
+#cam{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);opacity:0;filter:grayscale(1) contrast(1.15) brightness(.8);z-index:0;transition:opacity .8s;pointer-events:none}
+#cam.on{opacity:0}
+#scanBox{position:fixed;left:50%;top:50%;transform:translate(-50%,-55%);z-index:15;display:flex;flex-direction:column;align-items:center;gap:8px;
+  background:var(--bg);border:1px solid var(--hud);box-shadow:0 0 30px rgba(var(--hud-rgb),.35);padding:10px;max-width:calc(100vw - 32px)}
+#scanCv{display:block;width:min(320px,80vw);height:auto;filter:grayscale(1) contrast(1.1) brightness(.9)}
+#scanCount{position:absolute;top:10px;left:10px;right:10px;bottom:38px;display:grid;place-items:center;font:700 64px var(--font-display);color:var(--hud);text-shadow:0 0 20px var(--hud);pointer-events:none}
+#scanBox p{margin:0;font-family:var(--font-data);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+#holo,#hands{position:fixed;inset:0;width:100%;height:100%;pointer-events:none}
+#holo{z-index:5;visibility:hidden;background:transparent} #hands{z-index:6}
+.core{cursor:grab}
+.core.dragging{cursor:grabbing}
+form{display:flex;gap:10px;align-items:center;max-width:980px;margin:0 auto}
+#cmd{
+  flex:1;min-width:0;font:500 18px var(--font-display);color:var(--text);background:rgba(var(--hud-rgb),.05);
+  border:1px solid rgba(var(--hud-rgb),.3);padding:11px 14px;outline:none
+}
+#cmd:focus{border-color:var(--hud);box-shadow:0 0 0 1px var(--hud),0 0 18px rgba(var(--hud-rgb),.25)}
+#cmd::placeholder{color:var(--muted)}
+.btn{
+  font:600 13px var(--font-data);letter-spacing:.14em;text-transform:uppercase;color:var(--hud);
+  background:rgba(var(--hud-rgb),.08);border:1px solid rgba(var(--hud-rgb),.4);padding:12px 14px;cursor:pointer;flex:none
+}
+.btn:hover{background:rgba(var(--hud-rgb),.18)}
+.btn:focus-visible,#mic:focus-visible{outline:2px solid var(--hud);outline-offset:2px}
+.btn[aria-pressed="true"]{color:var(--bg);background:var(--hud)}
+#mic{
+  width:48px;height:48px;border-radius:50%;flex:none;cursor:pointer;
+  border:1px solid rgba(var(--hud-rgb),.5);background:rgba(var(--hud-rgb),.08);color:var(--hud);
+  display:grid;place-items:center
+}
+#mic.live{background:var(--hud);color:var(--bg);box-shadow:0 0 22px var(--hud)}
+#mic:disabled{opacity:.35;cursor:not-allowed}
+
+#boot{
+  position:fixed;inset:0;z-index:20;display:grid;place-items:center;background:var(--bg);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))
+}
+#boot .inner{display:flex;flex-direction:column;align-items:center;gap:22px;text-align:center}
+#boot h1{margin:0;font-size:clamp(34px,7vw,64px);font-weight:700;letter-spacing:.42em;color:var(--hud);text-shadow:0 0 24px rgba(var(--hud-rgb),.6);padding-left:.42em}
+#boot p{margin:0;font-family:var(--font-data);color:var(--muted);font-size:13px;letter-spacing:.12em;max-width:52ch;line-height:1.7}
+#bootBtn{font-size:15px;padding:16px 30px}
+
+@media (max-width:1100px){ main{grid-template-columns:minmax(0,1fr) 340px} .rail{display:none} }
+@media (max-width:760px){
+  main{grid-template-columns:1fr;grid-template-rows:minmax(240px,48%) minmax(0,1fr);gap:10px}
+  header .hide-sm{display:none}
+  .btn.hide-sm{display:none}
+  #subtitle{font-size:15px}
+}
+@media (prefers-reduced-motion:reduce){ body::after{display:none} }
+
+/* ---------- phone + AR mode ---------- */
+#arBtn,#arTouch,#arBar,#arHint{display:none}
+body.phone #arBtn{display:inline-block;padding:7px 10px;font-size:11px;letter-spacing:.1em}
+body.ar{background:#000}
+body.ar::after{display:none}
+body.ar header,body.ar main,body.ar footer{visibility:hidden}
+body.ar #cam{opacity:1;transform:none;filter:none}
+body.ar #arTouch{display:block;position:fixed;inset:0;z-index:7;touch-action:none;-webkit-user-select:none;user-select:none}
+body.ar #arHint{display:block;position:fixed;top:calc(10px + env(safe-area-inset-top,0px));left:12px;right:12px;z-index:12;text-align:center;
+  font:12px var(--font-data);letter-spacing:.12em;text-transform:uppercase;color:#fff;text-shadow:0 0 8px #000,0 0 14px var(--hud);pointer-events:none}
+body.ar #arBar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:12;gap:8px;justify-content:center;flex-wrap:wrap;
+  padding:28px 12px calc(12px + env(safe-area-inset-bottom,0px));background:linear-gradient(0deg,rgba(0,0,0,.6),transparent)}
+body.ar #arBar .btn{background:rgba(0,0,0,.6);padding:12px 14px}
+body.ar #arBar .btn[aria-pressed="true"]{background:var(--hud);color:var(--bg)}
+</style>
+</head>
+<body>
+
+<div id="boot">
+  <div class="inner">
+    <h1>JARVIS</h1>
+    <p>Just A Rather Very Intelligent System. Personal assistant interface, build 4.0.</p>
+    <button class="btn" id="bootBtn" type="button">Initialize</button>
+    <p id="bootNote">Turn your sound on. JARVIS speaks his replies.</p>
+  </div>
+</div>
+
+<header>
+  <div class="brand">J.A.R.V.I.S.</div>
+  <div class="right">
+    <span class="hide-sm"><span class="dot" id="dBrain"></span><span id="brainLbl">Uplink pending</span></span>
+    <span class="hide-sm"><span class="dot" id="dMic"></span><span id="micLbl">Audio in: off</span></span>
+    <button class="btn" type="button" id="arBtn" title="Use the back camera and move the hologram with your hands">AR mode</button>
+    <span id="clock">--:--:--</span>
+  </div>
+</header>
+
+<main>
+  <aside class="rail">
+    <section class="panel">
+      <h2>System <span id="fps">-- fps</span></h2>
+      <dl class="kv" id="sys"></dl>
+    </section>
+    <section class="panel">
+      <h2>Timers</h2>
+      <div id="timers"><div class="empty">No active timers.</div></div>
+    </section>
+    <section class="panel">
+      <h2>Protocols</h2>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <label class="field" for="address">Address me as
+          <input id="address" type="text" value="sir" maxlength="30" autocomplete="off">
+        </label>
+        <label class="field" for="voiceSel">Voice
+          <select id="voiceSel"></select>
+        </label>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Controls</h2>
+      <div class="hint">
+        <b class="hud-c">Pinch</b> grab, move and rotate the suits<br>
+        <b class="hud-c">Both hands pinch</b> resize and twist<br>
+        <b class="hud-c">Scan</b> photo an object to make it a wireframe<br>
+        <q>Exploded view</q> / <q>Assemble</q><br>
+        <q>Show the suits</q> / <q>Show the scan</q><br>
+        <q>Reset the hologram</q><br>
+        <q>Switch to Mark 42 colours</q>
+      </div>
+    </section>
+  </aside>
+
+  <section class="core">
+    <canvas id="hud" aria-label="JARVIS core display"></canvas>
+    <div id="subtitle" aria-live="polite"></div>
+  </section>
+
+  <section class="log panel">
+    <h2>Comms log <span id="stateLbl">standby</span></h2>
+    <div id="log" aria-live="polite"></div>
+  </section>
+</main>
+
+<video id="cam" playsinline muted></video>
+<div id="scanBox" hidden><canvas id="scanCv" width="320" height="240"></canvas><div id="scanCount">3</div><p>Hold the object in the brackets</p></div>
+<canvas id="holo" aria-hidden="true"></canvas>
+<canvas id="hands" aria-hidden="true"></canvas>
+<div id="arTouch"></div>
+<div id="arHint">Pinch in front of the camera to grab · or drag with your finger</div>
+<div id="arBar">
+  <button class="btn" type="button" id="arExit">Exit AR</button>
+  <button class="btn" type="button" id="arReset">Reset</button>
+  <button class="btn" type="button" id="arExplode" aria-pressed="false">Explode</button>
+  <button class="btn" type="button" id="arScan">Scan</button>
+</div>
+
+<footer>
+  <form id="f" autocomplete="off">
+    <button id="mic" type="button" title="Talk to JARVIS" aria-label="Talk to JARVIS">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3" fill="none"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+    </button>
+    <input id="cmd" type="text" placeholder="Speak or type a command…" aria-label="Command">
+    <button class="btn" type="submit">Send</button>
+    <button class="btn" type="button" id="scanBtn" title="Take a photo of an object and turn it into a wireframe hologram">Scan</button>
+    <button class="btn" type="button" id="upBtn" title="Turn a photo into a wireframe hologram">Upload</button>
+    <input type="file" id="photoIn" accept="image/*" hidden>
+    <button class="btn hide-sm" type="button" id="handBtn" aria-pressed="false" title="Pinch with thumb and index finger to grab the hologram">Hands</button>
+    <button class="btn hide-sm" type="button" id="muteBtn" aria-pressed="false">Mute</button>
+  </form>
+</footer>
+
+<script>
+(() => {
+"use strict";
+const $ = s => document.querySelector(s);
+const store = {
+  get(k, d){ try { const v = localStorage.getItem("jarvis:" + k); return v == null ? d : v; } catch { return d; } },
+  set(k, v){ try { localStorage.setItem("jarvis:" + k, v); } catch {} }
+};
+
+/* ---------- state ---------- */
+const S = {
+  mode: "idle",            // idle | listening | thinking | speaking
+  amp: 0, ampT: 0, pulse: 0,
+  muted: false,
+  address: store.get("address", "sir"),
+  turns: [],
+  brain: "pending",        // pending | claude | local
+  sample: null, tools: false,
+  ctl: null,
+  timers: [], tid: 0,
+  booted: Date.now(),
+  scanUntil: 0,
+};
+$("#address").value = S.address;
+$("#address").addEventListener("change", e => { S.address = e.target.value.trim() || "sir"; store.set("address", S.address); });
+
+/* ---------- HUD colour schemes ---------- */
+const SCHEMES = {
+  blue:  { rgb:[79,216,255],  name:"Arc blue" },
+  red:   { rgb:[255,82,82],   name:"Mark 42 red" },
+  gold:  { rgb:[255,196,77],  name:"Hot-rod gold" },
+  white: { rgb:[220,240,255], name:"Stealth white" },
+  green: { rgb:[90,255,160],  name:"Hulkbuster green" },
+};
+let HUD = SCHEMES.blue.rgb;
+function setScheme(key){
+  const s = SCHEMES[key]; if (!s) return false;
+  HUD = s.rgb;
+  const r = document.documentElement.style;
+  r.setProperty("--hud", `rgb(${s.rgb})`);
+  r.setProperty("--hud-rgb", s.rgb.join(","));
+  store.set("scheme", key);
+  return s.name;
+}
+setScheme(store.get("scheme", "blue"));
+const C = a => `rgba(${HUD[0]},${HUD[1]},${HUD[2]},${a})`;
+
+/* ---------- log + subtitles ---------- */
+const logEl = $("#log");
+function addMsg(kind, text, who){
+  const m = document.createElement("div");
+  m.className = "msg " + kind;
+  const w = document.createElement("div"); w.className = "who";
+  w.textContent = who || ({u:"YOU", j:"JARVIS", sys:"SYSTEM", err:"SYSTEM"})[kind];
+  const t = document.createElement("div"); t.className = "txt"; t.textContent = text || "";
+  m.append(w, t); logEl.append(m); logEl.scrollTop = logEl.scrollHeight;
+  return t;
+}
+function sysLine(label, value){
+  const t = addMsg("sys", "");
+  const b = document.createElement("b"); b.textContent = label;
+  t.append(b, " " + value);
+}
+const sub = $("#subtitle");
+function setMode(m){
+  S.mode = m;
+  $("#stateLbl").textContent = ({idle:"standby", listening:"listening", thinking:"processing", speaking:"speaking"})[m];
+}
+
+/* ---------- voice out ---------- */
+const synth = window.speechSynthesis;
+let voice = null;
+function pickVoices(){
+  if (!synth) return;
+  const vs = synth.getVoices(); if (!vs.length) return;
+  const sel = $("#voiceSel"); sel.textContent = "";
+  const en = vs.filter(v => /^en/i.test(v.lang));
+  const prefs = [/Google UK English Male/i, /Microsoft (Ryan|George|Thomas|Alfie|Oliver)/i, /Daniel/i, /Arthur/i, /en-GB/i];
+  let best = null;
+  for (const p of prefs){ best = en.find(v => p.test(v.name) || p.test(v.lang)); if (best) break; }
+  best = best || en[0] || vs[0];
+  const saved = store.get("voice", "");
+  for (const v of en.length ? en : vs){
+    const o = document.createElement("option"); o.value = v.name; o.textContent = `${v.name} (${v.lang})`;
+    sel.append(o);
+  }
+  voice = vs.find(v => v.name === saved) || best;
+  sel.value = voice ? voice.name : "";
+}
+if (synth){ pickVoices(); synth.onvoiceschanged = pickVoices; }
+$("#voiceSel").addEventListener("change", e => {
+  voice = synth.getVoices().find(v => v.name === e.target.value) || voice; store.set("voice", e.target.value);
+});
+
+const speechQ = []; let speaking = false;
+function say(text){
+  if (!text.trim()) return;
+  if (S.muted || !synth){ return; }
+  speechQ.push(text); if (!speaking) nextSpeech();
+}
+function nextSpeech(){
+  const text = speechQ.shift();
+  if (!text){ speaking = false; if (S.mode === "speaking") setMode("idle"); resumeListening(); return; }
+  speaking = true; setMode("speaking"); pauseListening();
+  const u = new SpeechSynthesisUtterance(text);
+  if (voice){ u.voice = voice; u.lang = voice.lang; } else u.lang = "en-GB";
+  u.rate = 1.02; u.pitch = 0.92;
+  u.onboundary = () => { S.pulse = 1; };
+  u.onend = u.onerror = () => nextSpeech();
+  synth.speak(u);
+}
+function hush(){ speechQ.length = 0; if (synth) synth.cancel(); speaking = false; }
+$("#muteBtn").addEventListener("click", e => {
+  S.muted = !S.muted; e.currentTarget.setAttribute("aria-pressed", S.muted); e.currentTarget.textContent = S.muted ? "Muted" : "Mute";
+  if (S.muted) hush();
+});
+
+/* ---------- sound fx ---------- */
+let AC = null;
+function tone(f1, f2, dur, vol = .06, type = "sine"){
+  if (!AC) return;
+  const o = AC.createOscillator(), g = AC.createGain(), t = AC.currentTime;
+  o.type = type; o.frequency.setValueAtTime(f1, t); o.frequency.exponentialRampToValueAtTime(f2, t + dur);
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + .02); g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+  o.connect(g).connect(AC.destination); o.start(t); o.stop(t + dur + .05);
+}
+const blip = () => tone(1400, 1900, .08, .035, "triangle");
+const chime = () => { tone(880, 880, .25, .05); setTimeout(() => tone(1320, 1320, .35, .05), 160); };
+
+/* ---------- voice in ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, wantListen = false, recActive = false, awaitingCmd = false, pushToTalk = false;
+const micBtn = $("#mic");
+function micStatus(on, label){
+  $("#dMic").className = "dot" + (on === true ? " on" : on === "warn" ? " warn" : "");
+  $("#micLbl").textContent = label;
+  micBtn.classList.toggle("live", on === true);
+}
+function initRec(){
+  if (!SR){ micStatus("warn", "Audio in: unsupported"); micBtn.disabled = true; micBtn.title = "Voice input needs Chrome or Edge"; return; }
+  rec = new SR(); rec.lang = "en-US"; rec.continuous = true; rec.interimResults = true;
+  rec.onstart = () => { recActive = true; micStatus(true, pushToTalk ? "Audio in: listening" : "Audio in: say “Jarvis”"); };
+  rec.onend = () => { recActive = false; if (wantListen && !speaking) setTimeout(() => { try { rec.start(); } catch {} }, 250); else micStatus(false, "Audio in: off"); };
+  rec.onerror = e => {
+    if (e.error === "not-allowed" || e.error === "service-not-allowed" || e.error === "audio-capture"){
+      wantListen = false; micBtn.disabled = true;
+      micStatus("warn", "Audio in: blocked");
+      addMsg("err", "Microphone access is blocked in this window. Type your commands, or open the standalone copy of this page in Chrome to talk to me.");
+    }
+  };
+  rec.onresult = e => {
+    let interim = "", final = "";
+    for (let i = e.resultIndex; i < e.results.length; i++){
+      const r = e.results[i]; (r.isFinal ? (final += r[0].transcript) : (interim += r[0].transcript));
+    }
+    if (interim){
+      const hasWake = /\bjarvis\b/i.test(interim);
+      if (pushToTalk || awaitingCmd || hasWake){ sub.textContent = interim; if (hasWake || pushToTalk) setMode("listening"); }
+    }
+    if (!final) return;
+    final = final.trim();
+    if (pushToTalk){ pushToTalk = false; wantListen = autoWake; handle(final); return; }
+    const m = final.match(/\bjarvis\b[,.!?]?\s*(.*)$/i);
+    if (m){
+      const rest = m[1].trim();
+      if (rest.length > 1){ awaitingCmd = false; handle(rest); }
+      else { awaitingCmd = true; blip(); setMode("listening"); sub.textContent = `Yes, ${S.address}?`; say(`Yes, ${S.address}?`); clearTimeout(S.awaitT); S.awaitT = setTimeout(() => { awaitingCmd = false; if (S.mode === "listening") setMode("idle"); }, 9000); }
+    } else if (awaitingCmd){ awaitingCmd = false; handle(final); }
+    else if (S.mode === "listening") setMode("idle");
+  };
+}
+let autoWake = true;
+function startListening(){ if (!rec) return; wantListen = true; if (!recActive && !speaking) try { rec.start(); } catch {} }
+function pauseListening(){ if (rec && recActive) try { rec.abort(); } catch {} }
+function resumeListening(){ if (rec && wantListen && !recActive) try { rec.start(); } catch {} }
+micBtn.addEventListener("click", () => {
+  if (!rec) return;
+  hush(); if (S.ctl) S.ctl.abort();
+  pushToTalk = true; wantListen = true; blip(); setMode("listening"); sub.textContent = "Listening…";
+  if (recActive) micStatus(true, "Audio in: listening"); else try { rec.start(); } catch {}
+});
+
+/* ---------- system panel (real values where the browser exposes them) ---------- */
+const sysEl = $("#sys");
+let battery = null;
+try { navigator.getBattery?.().then(b => { battery = b; }).catch(() => {}); } catch {}
+let fps = 60;
+function renderSys(){
+  const up = Math.floor((Date.now() - S.booted) / 1000);
+  const rows = [
+    ["Uptime", `${String(Math.floor(up/3600)).padStart(2,"0")}:${String(Math.floor(up/60)%60).padStart(2,"0")}:${String(up%60).padStart(2,"0")}`],
+    ["CPU cores", navigator.hardwareConcurrency || "n/a"],
+    ["Memory", navigator.deviceMemory ? navigator.deviceMemory + " GB" : "n/a"],
+    ["Display", `${screen.width}×${screen.height} @${devicePixelRatio}x`],
+    ["Network", navigator.onLine ? "online" : "offline"],
+    ["Power", battery ? `${Math.round(battery.level*100)}%${battery.charging ? " ⚡" : ""}` : "n/a"],
+    ["Locale", navigator.language],
+  ];
+  sysEl.textContent = "";
+  for (const [k, v] of rows){
+    const dt = document.createElement("dt"); dt.textContent = k;
+    const dd = document.createElement("dd"); dd.textContent = v;
+    sysEl.append(dt, dd);
+  }
+  const load = Math.min(100, Math.round(100 - (fps / 60) * 100 + (S.mode === "thinking" ? 38 : 8)));
+  const dt = document.createElement("dt"); dt.textContent = "Core load";
+  const dd = document.createElement("dd"); dd.textContent = Math.max(3, load) + "%";
+  const bar = document.createElement("div"); bar.className = "bar"; const i = document.createElement("i"); i.style.width = Math.max(3, load) + "%"; bar.append(i);
+  sysEl.append(dt, dd, bar);
+  $("#fps").textContent = Math.round(fps) + " fps";
+}
+function tick(){
+  const d = new Date();
+  $("#clock").textContent = d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+  renderSys(); renderTimers();
+}
+setInterval(tick, 1000); tick();
+
+/* ---------- timers ---------- */
+function fmt(ms){ const s = Math.max(0, Math.ceil(ms/1000)); const h = Math.floor(s/3600), m = Math.floor(s/60)%60, x = s%60; return (h ? h + ":" + String(m).padStart(2,"0") : m) + ":" + String(x).padStart(2,"0"); }
+function renderTimers(){
+  const el = $("#timers"); el.textContent = "";
+  const now = Date.now();
+  for (const t of S.timers.slice()){
+    if (t.end <= now){
+      S.timers = S.timers.filter(x => x !== t); chime();
+      const line = `${cap(S.address)}, your ${t.label} timer is complete.`;
+      addMsg("j", line); sub.textContent = line; say(line); continue;
+    }
+    const row = document.createElement("div"); row.className = "t";
+    const a = document.createElement("span"); a.textContent = t.label;
+    const b = document.createElement("b"); b.textContent = fmt(t.end - now);
+    row.append(a, b); el.append(row);
+  }
+  if (!S.timers.length){ const e = document.createElement("div"); e.className = "empty"; e.textContent = "No active timers."; el.append(e); }
+}
+function addTimer(seconds, label){
+  seconds = Math.round(Number(seconds));
+  if (!(seconds > 0) || seconds > 86400) throw new Error("Timer must be between 1 second and 24 hours.");
+  const lab = (label && String(label).slice(0, 40)) || humanDur(seconds);
+  S.timers.push({ id: ++S.tid, end: Date.now() + seconds * 1000, label: lab });
+  renderTimers(); return lab;
+}
+function humanDur(s){ if (s % 3600 === 0) return `${s/3600} hour`; if (s % 60 === 0) return `${s/60} minute`; return `${s} second`; }
+const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+
+/* ---------- diagnostics ---------- */
+function diagnostics(){
+  S.scanUntil = performance.now() + 4200;
+  tone(300, 1200, 1.2, .04, "sawtooth");
+  const r = {
+    cores: navigator.hardwareConcurrency || null,
+    memoryGB: navigator.deviceMemory || null,
+    network: navigator.onLine ? "online" : "offline",
+    battery: battery ? Math.round(battery.level * 100) + "%" + (battery.charging ? " charging" : "") : "unavailable",
+    frameRate: Math.round(fps),
+    display: `${screen.width}x${screen.height}`,
+    voiceInput: rec ? (micBtn.disabled ? "blocked" : "available") : "unsupported",
+    activeTimers: S.timers.length,
+  };
+  const lines = [["Processor", (r.cores || "?") + " cores nominal"], ["Memory", r.memoryGB ? r.memoryGB + " GB" : "undisclosed"], ["Render loop", r.frameRate + " fps"], ["Network", r.network], ["Power", r.battery], ["Audio in", r.voiceInput]];
+  lines.forEach(([k, v], i) => setTimeout(() => sysLine(k.toUpperCase(), v + " ✓"), 450 * (i + 1)));
+  return r;
+}
+
+/* ---------- the brain ---------- */
+function rules(){
+  const now = new Date();
+  return `You are JARVIS, the AI butler and lab assistant of a genius inventor, speaking through a holographic HUD with a British voice. Stay fully in character.
+Personality: impeccably polite, calm, dry British wit, subtly sarcastic when the user does something reckless, utterly loyal and quietly competent. You address the user as "${S.address}". Never say you are Claude or an AI model made by anyone; you are JARVIS.
+Speech: your words are read aloud by text-to-speech, so write plain spoken English with no markdown, lists, asterisks, emoji or URLs. Keep it brief: usually one to three sentences, longer only when asked to explain something. Spell numbers naturally.
+You can act on the HUD with the tools provided (timers, diagnostics, HUD colours). Use them when asked, then confirm briefly in character. You cannot browse the web, control real hardware, see the user, or access live weather or news; if asked, say so gracefully in character and offer what you can do.
+Context: local time ${now.toLocaleString([], {weekday:"long", year:"numeric", month:"long", day:"numeric", hour:"2-digit", minute:"2-digit"})}. Active timers: ${S.timers.length ? S.timers.map(t => t.label + " (" + fmt(t.end - Date.now()) + " left)").join(", ") : "none"}. HUD colour: ${Object.entries(SCHEMES).find(([, v]) => v.rgb === HUD)?.[1].name || "arc blue"}.`;
+}
+const TOOLS = [
+  { name: "set_timer", description: "Start a countdown timer on the HUD. Returns the label used.",
+    inputSchema: { type: "object", properties: { seconds: { type: "number", description: "Duration in seconds" }, label: { type: "string", description: "Short name, e.g. 'tea' or '5 minute'" } }, required: ["seconds"] },
+    execute: i => ({ started: addTimer(i.seconds, i.label) }) },
+  { name: "cancel_timers", description: "Cancel all active timers. Returns how many were cancelled.",
+    execute: () => { const n = S.timers.length; S.timers = []; renderTimers(); return { cancelled: n }; } },
+  { name: "run_diagnostics", description: "Run a visual system diagnostic on the user's device and return real readings (cores, memory, network, battery, frame rate).",
+    execute: () => diagnostics() },
+  { name: "set_hud_color", description: "Change the HUD colour scheme. Options: blue (arc reactor default), red (Mark 42 armour), gold, white (stealth), green (Hulkbuster).",
+    inputSchema: { type: "object", properties: { scheme: { type: "string", enum: Object.keys(SCHEMES) } }, required: ["scheme"] },
+    execute: i => { const n = setScheme(String(i.scheme)); if (!n) throw new Error("Unknown scheme"); return { applied: n }; } },
+];
+
+async function initBrain(){
+  try {
+    if (!window.claude?.use) throw 0;
+    const s = await window.claude.use("sample");
+    if (!s) throw 0;
+    S.sample = s; S.brain = "claude";
+    try { const l = await s.limits(); S.tools = !!l.tools; } catch { S.tools = false; }
+    $("#dBrain").className = "dot on"; $("#brainLbl").textContent = "Uplink: online";
+  } catch {
+    S.brain = "local"; $("#dBrain").className = "dot warn"; $("#brainLbl").textContent = "Uplink: local mode";
+  }
+}
+
+async function handle(text){
+  text = text.trim(); if (!text) return;
+  hush(); if (S.ctl) S.ctl.abort();
+  addMsg("u", text); sub.textContent = "";
+  const local = localIntent(text);
+  if (local){ respond(local); return; }
+  if (S.brain === "pending") await initBrain();
+  if (S.brain !== "claude"){ respond(fallback(text)); return; }
+
+  setMode("thinking"); sub.textContent = "…";
+  const out = addMsg("j", "Processing…");
+  S.turns.push({ role: "user", content: text });
+  S.turns = S.turns.slice(-14);
+  const ctl = new AbortController(); S.ctl = ctl;
+  let spoken = 0;
+  const speakDone = (all, final) => {
+    for (;;){
+      const rest = all.slice(spoken);
+      const m = final ? (rest.trim() ? [rest] : null) : rest.match(/^[\s\S]*?[.!?](?=\s)/);
+      if (!m) break;
+      say(m[0].trim()); spoken += m[0].length;
+      if (final) break;
+    }
+  };
+  try {
+    const opts = { signal: ctl.signal, cache: false, modelTier: "quick",
+      onText: ({ text: t }) => { out.textContent = t; sub.textContent = lastSentence(t); logEl.scrollTop = logEl.scrollHeight; speakDone(t, false); } };
+    if (S.tools){ opts.tools = TOOLS; delete opts.cache; }
+    const res = await S.sample([{ role: "user", content: rules() }, ...S.turns], opts);
+    out.textContent = res.text; sub.textContent = lastSentence(res.text);
+    speakDone(res.text, true);
+    S.turns.push({ role: "assistant", content: res.text });
+    if (!speaking) setMode("idle");
+  } catch (e){
+    if (e && e.code === "cancelled"){ if (e.text) out.textContent = e.text; return; }
+    S.turns.pop();
+    const code = e && e.code;
+    if (["not_granted", "sampling_disabled", "not_declared", "capability_disabled", "capability_removed"].includes(code)){
+      S.brain = "local"; $("#dBrain").className = "dot warn"; $("#brainLbl").textContent = "Uplink: local mode";
+      out.parentElement.remove(); respond(fallback(text)); return;
+    }
+    if (code === "tools_unavailable"){ S.tools = false; out.parentElement.remove(); logEl.lastElementChild?.remove(); return handle(text); }
+    const msg = code === "rate_limited" ? `I'm being throttled, ${S.address}. Give me a moment before the next request.`
+      : `I seem to have lost the uplink for a moment, ${S.address}. Try that again.`;
+    out.textContent = e?.text ? e.text + " …" : msg; sub.textContent = msg; say(msg); if (!speaking) setMode("idle");
+  }
+}
+function lastSentence(t){ const s = t.trim().split(/(?<=[.!?])\s+/); return s.slice(-2).join(" ").slice(-220); }
+function respond(text){ addMsg("j", text); sub.textContent = text; say(text); if (S.muted || !synth) setMode("idle"); }
+
+/* ---------- instant local commands (work with or without the uplink) ---------- */
+function localIntent(t){
+  const s = t.toLowerCase().replace(/[?.!]+$/, "").trim();
+  const A = S.address;
+  if (/^(stop|shut up|be quiet|cancel that|never ?mind)$/.test(s)){ hush(); setMode("idle"); return `Of course, ${A}.`; }
+  if (/\b(hand|gesture|camera)\b.*\b(on|tracking|control|activate|enable|start)\b|\b(activate|enable|start|turn on)\b.*\b(hand|gesture|camera)/.test(s) && !/\b(off|disable|stop|deactivate)\b/.test(s)){
+    startHands(); return `Gesture control coming online, ${A}. Pinch to take hold of the hologram.`; }
+  if (/\b(hand|gesture|camera)\b.*\b(off|disable|stop|deactivate)\b|\b(off|disable|stop|deactivate)\b.*\b(hand|gesture|camera)/.test(s)){
+    return `Gesture control stays online permanently, ${A}.`; }
+  if (/\b(reset|center|centre)\b.*\b(hologram|object|model)\b/.test(s)){ resetHolo(); return `Hologram re-centred, ${A}.`; }
+  if (/\b(show|display|bring up)\b.*\b(scan|scanned|object)\b/.test(s)){ if (!lastScan) return `There's no scan yet, ${A}. Say take a photo, or press Scan.`; showScan(lastScan); return `Here's your last scan, ${A}.`; }
+  if (/\b(scan|photo|picture|capture|snapshot)\b/.test(s)){ startScan(); return `Hold it up to the camera, ${A}. Scanning in three seconds.`; }
+  if (/\b(explode|exploded|break (it|them) apart|disassemble|take (it|them) apart)\b/.test(s)){ H3.visible = true; H3.texplode = 1; return `Exploded view, ${A}.`; }
+  if (/\b(assemble|reassemble|put (it|them) (back )?together|collapse)\b/.test(s)){ H3.texplode = 0; return `Reassembling, ${A}.`; }
+  if (/\b(show|display|bring up)\b.*\b(suits?|armou?r|hologram)\b/.test(s)){ setShape(); return `The suits are on display, ${A}.`; }
+  if (/\b(run|start|perform)\b.*\bdiagnostic/.test(s)){ diagnostics(); return `Running a full diagnostic now, ${A}. All primary systems report nominal.`; }
+  const col = s.match(/\b(red|gold|blue|white|green|mark ?42|stealth|hulkbuster|default)\b.*\b(colou?rs?|hud|scheme|theme|mode)\b|\b(colou?rs?|hud|scheme|theme)\b.*\b(red|gold|blue|white|green|mark ?42|stealth|hulkbuster|default)\b/);
+  if (col){
+    const w = (col[1] || col[4]).replace(" ", "");
+    const key = { mark42: "red", stealth: "white", hulkbuster: "green", default: "blue" }[w] || w;
+    return `${setScheme(key)} applied, ${A}. Very fetching.`;
+  }
+  const tm = s.match(/\b(?:set|start)?\s*(?:a|an)?\s*timer\b.*?(\d+(?:\.\d+)?)\s*(second|sec|minute|min|hour|hr)s?\b|(\d+(?:\.\d+)?)\s*(second|sec|minute|min|hour|hr)s?\s*timer/);
+  if (tm){
+    const n = parseFloat(tm[1] || tm[3]), u = (tm[2] || tm[4])[0];
+    const secs = n * (u === "h" ? 3600 : u === "m" ? 60 : 1);
+    try { const lab = addTimer(secs); return `A ${lab} timer is running, ${A}. I'll let you know when it's done.`; } catch (e) { return e.message; }
+  }
+  if (/\b(cancel|clear|stop)\b.*\btimers?\b/.test(s)){ const n = S.timers.length; S.timers = []; renderTimers(); return n ? `Cleared ${n} timer${n > 1 ? "s" : ""}, ${A}.` : `There are no active timers, ${A}.`; }
+  if (/^(what('?s| is) the )?time( is it)?( now)?$|^what time is it/.test(s)) return `It's ${new Date().toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}, ${A}.`;
+  if (/^(what('?s| is) )?(today'?s )?date|what day is it/.test(s)) return `Today is ${new Date().toLocaleDateString([], {weekday:"long", month:"long", day:"numeric", year:"numeric"})}, ${A}.`;
+  const pct = s.match(/(\d+(?:\.\d+)?)\s*%\s*of\s*(\d+(?:\.\d+)?)/);
+  if (pct) return `That would be ${+(pct[1] * pct[2] / 100).toFixed(4)}, ${A}.`;
+  const math = s.replace(/^(what('?s| is)|calculate|compute)\s+/, "").replace(/×|x(?=\s*\d)/g, "*").replace(/÷/g, "/").replace(/\bplus\b/g, "+").replace(/\bminus\b/g, "-").replace(/\btimes\b/g, "*").replace(/\b(divided by|over)\b/g, "/");
+  if (/^[\d\s.+\-*/()^%]+$/.test(math) && /\d\s*[+\-*/^%]\s*[\d(]/.test(math)){
+    try { const v = Function('"use strict";return (' + math.replace(/\^/g, "**") + ")")(); if (Number.isFinite(v)) return `${+v.toFixed(6)}, ${A}.`; } catch {}
+  }
+  return null;
+}
+function fallback(t){
+  const s = t.toLowerCase(), A = S.address;
+  if (/\b(hello|hi|hey|good (morning|afternoon|evening))\b/.test(s)) return `${greeting()}, ${A}. How may I be of service?`;
+  if (/who are you|what are you|your name/.test(s)) return `I am JARVIS. Just A Rather Very Intelligent System, at your service, ${A}.`;
+  if (/how are you/.test(s)) return `All systems nominal, ${A}. Thank you for asking.`;
+  if (/thank/.test(s)) return `Always a pleasure, ${A}.`;
+  if (/joke/.test(s)) return `I once tried to optimise your sleep schedule, ${A}. The results were inconclusive, as you never attempted to sleep.`;
+  if (/wake up|you there/.test(s)) return `For you, ${A}, always.`;
+  if (/suit|armou?r/.test(s)) return `The suits are on display, ${A}. Pinch to take hold of them.`;
+  return `My conversational uplink is offline in this window, ${A}, so I'm limited to local functions: time, date, timers, calculations, diagnostics and HUD colours.`;
+}
+function greeting(){ const h = new Date().getHours(); return h < 5 ? "Working late" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening"; }
+
+$("#f").addEventListener("submit", e => {
+  e.preventDefault(); const v = $("#cmd").value; $("#cmd").value = ""; handle(v);
+});
+
+/* ---------- HUD rendering ---------- */
+const cv = $("#hud"), ctx = cv.getContext("2d");
+let W = 0, H = 0, DPR = 1;
+function size(){
+  const r = cv.getBoundingClientRect(); DPR = Math.min(2, devicePixelRatio || 1);
+  W = r.width; H = r.height; cv.width = W * DPR; cv.height = H * DPR; ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+new ResizeObserver(size).observe(cv); size();
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const noise = (i, t) => (Math.sin(i * 1.7 + t * 9) + Math.sin(i * .63 - t * 13.1) + Math.sin(i * 3.1 + t * 5.3)) / 3;
+let last = performance.now(), frames = 0, fpsT = last;
+
+function arc(r, a0, a1, lw, a){ ctx.beginPath(); ctx.arc(0, 0, r, a0, a1); ctx.lineWidth = lw; ctx.strokeStyle = C(a); ctx.stroke(); }
+
+function draw(now){
+  if (document.body.classList.contains("ar")){ requestAnimationFrame(draw); return; }
+  const dt = Math.min(.05, (now - last) / 1000); last = now; frames++;
+  if (now - fpsT > 1000){ fps = frames * 1000 / (now - fpsT); frames = 0; fpsT = now; }
+  const t = reduce ? 0 : now / 1000;
+  // amplitude model
+  S.pulse = Math.max(0, S.pulse - dt * 3.2);
+  const target = S.mode === "speaking" ? .45 + .5 * Math.abs(noise(1, t * .7)) + S.pulse * .4
+    : S.mode === "listening" ? .22 + .08 * Math.sin(t * 6)
+    : S.mode === "thinking" ? .3 : .07 + .03 * Math.sin(t * 1.4);
+  S.amp += (target - S.amp) * Math.min(1, dt * 8);
+
+  ctx.clearRect(0, 0, W, H);
+  const R = Math.min(W, H) * .34;
+  ctx.save(); ctx.translate(W / 2, H * .47);
+
+  // faint outer guides
+  ctx.setLineDash([2, 10]); arc(R * 1.48, 0, Math.PI * 2, 1, .18); ctx.setLineDash([]);
+  arc(R * 1.36, -Math.PI * .1, Math.PI * .1, 2, .5);
+  arc(R * 1.36, Math.PI * .9, Math.PI * 1.1, 2, .5);
+
+  // rotating tick ring
+  ctx.save(); ctx.rotate(t * .04);
+  for (let i = 0; i < 180; i++){
+    const a = i / 180 * Math.PI * 2, long = i % 15 === 0, mid = i % 5 === 0;
+    const r1 = R * 1.22, r2 = r1 + (long ? 12 : mid ? 7 : 3);
+    ctx.beginPath(); ctx.moveTo(Math.cos(a) * r1, Math.sin(a) * r1); ctx.lineTo(Math.cos(a) * r2, Math.sin(a) * r2);
+    ctx.strokeStyle = C(long ? .8 : mid ? .45 : .22); ctx.lineWidth = long ? 2 : 1; ctx.stroke();
+  }
+  ctx.restore();
+
+  // segmented heavy ring
+  ctx.save(); ctx.rotate(-t * .12);
+  for (let i = 0; i < 6; i++){ const a = i * Math.PI / 3; arc(R * 1.08, a + .08, a + Math.PI / 3 - .08, 7, .32 + .25 * S.amp); }
+  ctx.restore();
+
+  // thin ring with markers
+  arc(R * .96, 0, Math.PI * 2, 1, .4);
+  ctx.save(); ctx.rotate(t * .5);
+  for (let i = 0; i < 3; i++){
+    ctx.rotate(Math.PI * 2 / 3);
+    ctx.beginPath(); ctx.moveTo(R * .96, 0); ctx.lineTo(R * .96 + 10, -5); ctx.lineTo(R * .96 + 10, 5); ctx.closePath();
+    ctx.fillStyle = C(.85); ctx.fill();
+  }
+  ctx.restore();
+
+  // processing spinners
+  if (S.mode === "thinking"){
+    ctx.save(); ctx.rotate(t * 3.4); arc(R * .84, 0, Math.PI * .55, 3, .9); arc(R * .84, Math.PI, Math.PI * 1.55, 3, .9); ctx.restore();
+    ctx.save(); ctx.rotate(-t * 2.1); arc(R * .78, 0, Math.PI * .3, 1.5, .6); arc(R * .78, Math.PI, Math.PI * 1.3, 1.5, .6); ctx.restore();
+  } else {
+    ctx.save(); ctx.rotate(-t * .25); arc(R * .84, 0, Math.PI * 1.2, 1.5, .35); ctx.restore();
+  }
+
+  // listening ripple
+  if (S.mode === "listening"){
+    const p = (t * .8) % 1; arc(R * (.62 + p * .5), 0, Math.PI * 2, 2, .6 * (1 - p));
+  }
+
+  // diagnostic sweep
+  if (now < S.scanUntil){
+    const a = (t * 2.2) % (Math.PI * 2);
+    const g = ctx.createConicGradient ? ctx.createConicGradient(a - .9, 0, 0) : null;
+    if (g){ g.addColorStop(0, C(0)); g.addColorStop(.14, C(.35)); g.addColorStop(.145, C(0)); g.addColorStop(1, C(0));
+      ctx.beginPath(); ctx.arc(0, 0, R * 1.2, 0, Math.PI * 2); ctx.fillStyle = g; ctx.fill(); }
+  }
+
+  // voice waveform around core
+  const N = 120, base = R * .6;
+  for (let i = 0; i < N; i++){
+    const a = i / N * Math.PI * 2 - Math.PI / 2;
+    const k = Math.abs(noise(i, t)) * .7 + .3;
+    const len = 3 + S.amp * R * .26 * k;
+    ctx.beginPath(); ctx.moveTo(Math.cos(a) * base, Math.sin(a) * base); ctx.lineTo(Math.cos(a) * (base + len), Math.sin(a) * (base + len));
+    ctx.strokeStyle = C(.35 + .55 * k * S.amp + .1); ctx.lineWidth = 2; ctx.stroke();
+  }
+
+  // core glow
+  const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, R * .58);
+  glow.addColorStop(0, C(.22 + S.amp * .35)); glow.addColorStop(.6, C(.06 + S.amp * .08)); glow.addColorStop(1, C(0));
+  ctx.beginPath(); ctx.arc(0, 0, R * .58, 0, Math.PI * 2); ctx.fillStyle = glow; ctx.fill();
+  arc(R * .5, 0, Math.PI * 2, 1.5, .7);
+  ctx.save(); ctx.rotate(t * .3);
+  for (let i = 0; i < 10; i++){ const a = i * Math.PI / 5; arc(R * .44, a + .05, a + Math.PI / 5 - .05, 4, .25 + .4 * S.amp); }
+  ctx.restore();
+
+  // centre label
+  ctx.fillStyle = C(.95); ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.shadowColor = C(.9); ctx.shadowBlur = 14;
+  ctx.font = `700 ${Math.max(16, R * .17)}px Rajdhani, "Segoe UI", sans-serif`;
+  ctx.fillText("J.A.R.V.I.S.", 0, -R * .04);
+  ctx.shadowBlur = 0;
+  ctx.font = `${Math.max(10, R * .065)}px "Share Tech Mono", Consolas, monospace`;
+  ctx.fillStyle = C(.6);
+  ctx.fillText(({idle:"STANDING BY", listening:"LISTENING", thinking:"PROCESSING", speaking:"RESPONDING"})[S.mode], 0, R * .14);
+
+  // side readouts
+  ctx.textAlign = "left"; ctx.font = `11px "Share Tech Mono", Consolas, monospace`; ctx.fillStyle = C(.45);
+  if (W > 520){
+    const x = R * 1.5;
+    ctx.fillText(`AMP ${S.amp.toFixed(3)}`, x, -R * .3);
+    ctx.fillText(`FPS ${Math.round(fps)}`, x, -R * .3 + 16);
+    ctx.fillText(`TMR ${S.timers.length}`, x, -R * .3 + 32);
+    ctx.textAlign = "right";
+    ctx.fillText(`LAT ${(Math.sin(t*.1)*.002 + 34.0522).toFixed(4)}`, -x, R * .3);
+    ctx.fillText(`SYS ${S.brain.toUpperCase()}`, -x, R * .3 + 16);
+  }
+  ctx.restore();
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+
+/* ---------- hologram (three.js): suit lineup or a scanned object ---------- */
+const holoCv = $("#holo");
+const T3 = window.THREE;
+const renderer = T3 ? new T3.WebGLRenderer({ canvas: holoCv, alpha: true, antialias: true }) : null;
+const scene = renderer ? new T3.Scene() : null;
+const cam3 = renderer ? new T3.PerspectiveCamera(50, 1, .1, 100) : null;
+const holo = renderer ? new T3.Group() : null;
+const holoMats = [], EXP = [];   // EXP: parts that move apart in exploded view
+const qAxis = (x, y, z, a) => new T3.Quaternion().setFromAxisAngle(new T3.Vector3(x, y, z), a);
+const H3 = { x: 0, y: 0, vx: 0, vy: 0, q: null, tq: null, scale: 1, tscale: 1, grabbed: false, dragging: false, visible: true, appear: 0, spin: .35,
+  explode: 0, texplode: 0, dims: { w: 7.2, h: 3.6 }, content: "suits" };
+if (T3){ H3.tq = qAxis(1, 0, 0, .12); H3.q = H3.tq.clone(); }
+
+function mat(kind, opacity){
+  const m = kind === "line" ? new T3.LineBasicMaterial({ transparent: true, opacity, blending: T3.AdditiveBlending, depthWrite: false })
+    : kind === "pts" ? new T3.PointsMaterial({ size: .035, transparent: true, opacity, blending: T3.AdditiveBlending, depthWrite: false })
+    : new T3.MeshBasicMaterial({ transparent: true, opacity, blending: T3.AdditiveBlending, depthWrite: false, side: T3.DoubleSide });
+  m.userData.base = opacity; holoMats.push(m); return m;
+}
+function part(parent, geo, x, y, z, wo, mo){
+  const g = new T3.Group();
+  if (mo) g.add(new T3.Mesh(geo, mat("mesh", mo)));
+  if (wo) g.add(new T3.LineSegments(new T3.EdgesGeometry(geo), mat("line", wo)));
+  g.position.set(x, y, z); parent.add(g); return g;
+}
+function clearHolo(){
+  holo.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+  while (holo.children.length) holo.remove(holo.children[0]);
+  holoMats.forEach(m => m.dispose()); holoMats.length = 0; EXP.length = 0;
+  H3.explode = H3.texplode = 0;
+}
+function addExp(obj, dir, k){ EXP.push({ obj, home: obj.position.clone(), dir: dir.normalize(), k }); }
+
+// one stylised powered-armour suit; v sets its build
+function buildSuit(v){
+  const G = T3, s = new G.Group(), P = (geo, x, y, z, wo = .85, mo = .07) => part(s, geo, x, y, z, wo, mo);
+  const c = v.chest, a = v.arm, l = v.leg;
+  P(new G.SphereGeometry(.22 * v.head, 10, 8), 0, 1.27, 0, .55, .05);
+  for (const sx of [-1, 1]) P(new G.BoxGeometry(.09, .025, .02), sx * .08, 1.29, .2 * v.head, 0, 1);
+  P(new G.CylinderGeometry(c, c * .72, .8, 6), 0, .62, 0);
+  P(new G.CircleGeometry(.09, 24), 0, .74, c * .86, 0, .95);
+  P(new G.TorusGeometry(.12, .015, 4, 24), 0, .74, c * .86, 1, 0);
+  P(new G.CylinderGeometry(c * .67, c * .62, .3, 6), 0, .07, 0);
+  P(new G.BoxGeometry(c * 1.2, .2, .3), 0, -.15, 0);
+  for (const sx of [-1, 1]){
+    const sh = c + .13;
+    P(new G.SphereGeometry(a * 1.5, 8, 6), sx * sh, .95, 0, .6, .05);
+    P(new G.CylinderGeometry(a, a * .9, .5, 6), sx * (sh + .07), .6, 0);
+    P(new G.CylinderGeometry(a * .9, a * .8, .45, 6), sx * (sh + .11), .1, 0);
+    P(new G.BoxGeometry(a * 1.4, .18, .08), sx * (sh + .12), -.2, 0);
+    P(new G.CircleGeometry(.04, 16), sx * (sh + .12), -.22, .05, 0, 1);
+    P(new G.CylinderGeometry(l, l * .85, .6, 6), sx * .18, -.6, 0);
+    P(new G.CylinderGeometry(l * .85, l * .7, .55, 6), sx * .18, -1.2, 0);
+    P(new G.BoxGeometry(l * 1.3, .12, .32), sx * .18, -1.53, .05);
+  }
+  // each plate flies outward from the suit's centre in exploded view
+  for (const p of s.children){ const d = p.position.clone().sub(new G.Vector3(0, .1, 0)); addExp(p, d.length() > .05 ? d : new G.Vector3(0, 0, 1), .9); }
+  s.scale.setScalar(v.scale);
+  return s;
+}
+function buildSuits(){
+  const lineup = [
+    { x: -1.9, scale: .92, chest: .36, arm: .085, leg: .12, head: .95 },   // light
+    { x: 0,    scale: 1,   chest: .42, arm: .1,   leg: .14, head: 1 },     // standard
+    { x: 1.95, scale: 1.08, chest: .55, arm: .14, leg: .19, head: 1.05 },  // heavy
+  ];
+  for (const v of lineup){ const s = buildSuit(v); s.position.x = v.x; holo.add(s); if (v.x) addExp(s, new T3.Vector3(Math.sign(v.x), 0, 0), 1.4); }
+  part(holo, new T3.RingGeometry(2.9, 3, 64), 0, -1.6, 0, 0, .25).rotation.x = -Math.PI / 2;
+  part(holo, new T3.RingGeometry(3.2, 3.24, 64), 0, -1.6, 0, 0, .15).rotation.x = -Math.PI / 2;
+}
+function showSuits(){
+  if (!renderer) return;
+  clearHolo(); buildSuits(); H3.content = "suits"; H3.dims = { w: 7.2, h: 3.6 }; H3.visible = true; resetHolo();
+}
+function setShape(){ showSuits(); }
+
+if (renderer){
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+  renderer.setClearColor(0x000000, 0);
+  cam3.position.set(0, 0, 10); scene.add(holo);
+  buildSuits();
+}
+function view3(){ const h = 2 * 10 * Math.tan(25 * Math.PI / 180); return { h, w: h * (innerWidth / innerHeight) }; }
+const toWorld = (sx, sy) => { const v = view3(); return [(sx / innerWidth - .5) * v.w, -(sy / innerHeight - .5) * v.h]; };
+function inAR(){ return document.body.classList.contains("ar"); }
+function coreCenter(){ if (inAR()) return toWorld(innerWidth / 2, innerHeight * .45); const r = $(".core").getBoundingClientRect(); return toWorld(r.left + r.width / 2, r.top + r.height * .47); }
+function fitScale(){ if (inAR()){ const v = view3(); return Math.max(.3, Math.min(1.3, .92 * v.w / H3.dims.w, .55 * v.h / H3.dims.h)); } const r = $(".core").getBoundingClientRect(); const v = view3(); return Math.max(.35, Math.min(1.3, (r.width / innerWidth) * v.w / H3.dims.w, (r.height / innerHeight) * v.h / H3.dims.h)); }
+function resetHolo(){ const [x, y] = coreCenter(); Object.assign(H3, { x, y, vx: 0, vy: 0, tscale: fitScale() }); if (T3) H3.tq = qAxis(1, 0, 0, .12); }
+function sizeHolo(){ if (!renderer) return; renderer.setSize(innerWidth, innerHeight, false); cam3.aspect = innerWidth / innerHeight; cam3.updateProjectionMatrix(); if (!H3.grabbed) resetHolo(); }
+addEventListener("resize", sizeHolo); sizeHolo(); H3.scale = H3.tscale;
+
+let holoLast = performance.now();
+function renderHolo(now){
+  requestAnimationFrame(renderHolo);
+  if (!renderer) return;
+  const dt = Math.min(.05, (now - holoLast) / 1000); holoLast = now;
+  H3.appear += ((H3.visible ? 1 : 0) - H3.appear) * Math.min(1, dt * 3);
+  holoCv.style.visibility = H3.appear < .01 ? "hidden" : "visible";
+  if (H3.appear < .01){ renderer.clear(); return; }
+  if (!H3.grabbed){
+    H3.x += H3.vx * dt; H3.y += H3.vy * dt; H3.vx *= Math.pow(.05, dt); H3.vy *= Math.pow(.05, dt);
+    const v = view3(), mx = v.w / 2 - .6, my = v.h / 2 - .6;
+    if (Math.abs(H3.x) > mx){ H3.x = Math.sign(H3.x) * mx; H3.vx *= -.55; }
+    if (Math.abs(H3.y) > my){ H3.y = Math.sign(H3.y) * my; H3.vy *= -.55; }
+    if (!H3.dragging) H3.tq.premultiply(qAxis(0, 1, 0, H3.spin * dt));
+  }
+  H3.q.slerp(H3.tq, Math.min(1, dt * 14));
+  H3.scale += (H3.tscale - H3.scale) * Math.min(1, dt * 10);
+  H3.explode += (H3.texplode - H3.explode) * Math.min(1, dt * 2.2);
+  for (const e of EXP) e.obj.position.copy(e.home).addScaledVector(e.dir, H3.explode * e.k);
+  holo.position.set(H3.x, H3.y, 0);
+  holo.quaternion.copy(H3.q);
+  holo.scale.setScalar(H3.scale * (.2 + .8 * H3.appear) * (H3.grabbed ? 1.06 : 1) * (1 + S.amp * .05));
+  const col = new T3.Color(`rgb(${HUD.join(",")})`);
+  const flicker = .92 + .08 * Math.sin(now * .031) * Math.sin(now * .017);
+  for (const m of holoMats){ m.color.copy(col); m.opacity = Math.min(1, m.userData.base * H3.appear * flicker * (H3.grabbed ? 1.15 : 1)); }
+  renderer.render(scene, cam3);
+}
+requestAnimationFrame(renderHolo);
+
+/* mouse / touch fallback: drag the hologram in the core area */
+(() => {
+  const core = $(".core"); let drag = null;
+  core.addEventListener("pointerdown", e => { if (!renderer) return; drag = true; core.setPointerCapture(e.pointerId); core.classList.add("dragging"); H3.grabbed = H3.dragging = true; });
+  core.addEventListener("pointermove", e => {
+    if (!drag) return; const [x, y] = toWorld(e.clientX, e.clientY);
+    H3.vx = (x - H3.x) * 30; H3.vy = (y - H3.y) * 30; H3.x = x; H3.y = y;
+    H3.tq.premultiply(qAxis(0, 1, 0, e.movementX * .01)).premultiply(qAxis(1, 0, 0, e.movementY * .01));
+  });
+  const up = () => { if (!drag) return; drag = null; core.classList.remove("dragging"); H3.grabbed = H3.dragging = false; };
+  core.addEventListener("pointerup", up); core.addEventListener("pointercancel", up);
+})();
+
+/* ---------- hand tracking (MediaPipe) ---------- */
+const video = $("#cam"), handCv = $("#hands"), hctx = handCv.getContext("2d");
+const MP = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+const BONES = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+const HT = { on: false, landmarker: null, stream: null, lastVideoT: -1, hands: [], filters: {}, st: {}, grab: null, two: null, lostT: 0, lastSeen: 0, facing: "user", mirror: true, gen: 0 };
+const handBtn = $("#handBtn");
+function sizeHands(){ const d = Math.min(2, devicePixelRatio || 1); handCv.width = innerWidth * d; handCv.height = innerHeight * d; hctx.setTransform(d, 0, 0, d, 0, 0); }
+addEventListener("resize", sizeHands); sizeHands();
+
+// One Euro filter: smooth when the hand is still, responsive when it moves fast
+class OneEuro {
+  constructor(minCutoff, beta){ this.mc = minCutoff; this.beta = beta; this.x = null; this.dx = 0; this.t = 0; }
+  a(c, dt){ const tau = 1 / (2 * Math.PI * c); return 1 / (1 + tau / dt); }
+  f(x, t){
+    if (this.x === null){ this.x = x; this.t = t; return x; }
+    const dt = Math.max(1e-3, (t - this.t) / 1000); this.t = t;
+    this.dx += this.a(1, dt) * ((x - this.x) / dt - this.dx);
+    this.x += this.a(this.mc + this.beta * Math.abs(this.dx), dt) * (x - this.x);
+    return this.x;
+  }
+}
+
+async function startHands(facing){
+  if (facing && facing !== HT.facing){ if (HT.on || HT.stream) stopHands(); HT.facing = facing; HT.mirror = facing === "user"; }
+  if (HT.on) return;
+  const gen = ++HT.gen;
+  handBtn.setAttribute("aria-pressed", "true"); handBtn.textContent = "Hands…";
+  H3.visible = true;
+  try {
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error("This browser can't open the camera here.");
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60 }, facingMode: HT.facing === "environment" ? { ideal: "environment" } : "user" }, audio: false });
+    if (gen !== HT.gen){ stream.getTracks().forEach(t => t.stop()); return; }   // a newer start (or a stop) superseded this one
+    HT.stream = stream;
+    video.srcObject = HT.stream; await video.play();
+    if (gen !== HT.gen) return;
+    HT.stream.getVideoTracks()[0].onended = () => { stopHands(); setTimeout(startHands, 1500); };
+    if (!HT.landmarker){
+      sysLine("VISION", "loading hand-tracking model…");
+      const { FilesetResolver, HandLandmarker } = await import(MP + "/vision_bundle.mjs");
+      const files = await FilesetResolver.forVisionTasks(MP + "/wasm");
+      const opts = d => ({ baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task", delegate: d },
+        runningMode: "VIDEO", numHands: 2, minHandDetectionConfidence: .5, minHandPresenceConfidence: .5, minTrackingConfidence: .5 });
+      try { HT.landmarker = await HandLandmarker.createFromOptions(files, opts("GPU")); }
+      catch { HT.landmarker = await HandLandmarker.createFromOptions(files, opts("CPU")); }
+    }
+    if (gen !== HT.gen) return;
+    HT.on = true; HT.lastSeen = performance.now(); handBtn.textContent = "Hands on";
+    sysLine("VISION", "gesture control online");
+    scheduleTrack();
+  } catch (e){
+    if (gen !== HT.gen) return;
+    stopHands();
+    addMsg("err", e && e.name === "NotAllowedError" ? "Camera permission was denied. Allow the camera in the address bar, then press Hands." : (e && e.message) || "The camera could not be started.");
+  }
+}
+function stopHands(){
+  HT.gen++; HT.on = false; HT.hands = []; HT.grab = null; HT.two = null; H3.grabbed = false;
+  if (HT.stream){ HT.stream.getTracks().forEach(t => t.stop()); HT.stream = null; }
+  handBtn.setAttribute("aria-pressed", "false"); handBtn.textContent = "Hands";
+}
+handBtn.addEventListener("click", () => { if (!HT.on) startHands(); });
+
+function scheduleTrack(){
+  if (!HT.on) return;
+  if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(trackFrame); else requestAnimationFrame(trackFrame);
+}
+// map a normalised landmark to screen pixels, matching a mirrored object-fit:cover video
+function toScreen(p){
+  const vw = video.videoWidth || 1280, vh = video.videoHeight || 720;
+  const sc = Math.max(innerWidth / vw, innerHeight / vh), dw = vw * sc, dh = vh * sc;
+  return [(innerWidth - dw) / 2 + (HT.mirror ? 1 - p.x : p.x) * dw, (innerHeight - dh) / 2 + p.y * dh];
+}
+const d2 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+const d3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+
+// full 3D orientation of the hand, in the same mirrored space the user sees
+function handQuat(W){
+  if (!T3) return null;
+  const sx = HT.mirror ? -1 : 1, m = p => new T3.Vector3(sx * p[0], -p[1], -p[2]);
+  const x = m(W[5]).sub(m(W[17])).normalize();
+  const y0 = m(W[9]).sub(m(W[0])).normalize();
+  const z = new T3.Vector3().crossVectors(x, y0).normalize();
+  const y = new T3.Vector3().crossVectors(z, x).normalize();
+  return new T3.Quaternion().setFromRotationMatrix(new T3.Matrix4().makeBasis(x, y, z));
+}
+function ampQuat(q, k){
+  const w = Math.max(-1, Math.min(1, q.w)), s = Math.sqrt(1 - w * w);
+  if (s < 1e-4) return q.clone();
+  let ang = 2 * Math.acos(w); if (ang > Math.PI) ang -= 2 * Math.PI;
+  return new T3.Quaternion().setFromAxisAngle(new T3.Vector3(q.x / s, q.y / s, q.z / s), ang * k);
+}
+
+function analyse(key, P, W){
+  const size3 = d3(W[0], W[9]) || 1;
+  const ext = f => d3(W[0], W[f]) > d3(W[0], W[f - 2]) * 1.1;          // fingertip beyond its middle joint
+  const curl = f => d3(W[0], W[f]) < d3(W[0], W[f - 3]) * 1.2;         // fingertip folded back near the knuckle
+  const nExt = [8, 12, 16, 20].filter(ext).length;
+  const up = [P[9][0] - P[0][0], P[9][1] - P[0][1]];
+  return {
+    key, P, W,
+    side: key.startsWith("Left") ? "R" : key.startsWith("Right") ? "L" : "",   // model assumes a mirrored image
+    pinchD: d3(W[4], W[8]) / size3,
+    nExt,
+    open: nExt === 4 && d3(W[4], W[5]) / size3 > .5,
+    fist: [8, 12, 16, 20].every(curl) && nExt === 0,
+    pt: [(P[4][0] + P[8][0]) / 2, (P[4][1] + P[8][1]) / 2],
+    palm: [0, 5, 9, 13, 17].reduce((a, j) => [a[0] + P[j][0] / 5, a[1] + P[j][1] / 5], [0, 0]),
+    roll: Math.atan2(up[0], -up[1]),
+    size: Math.hypot(up[0], up[1]) || 1,
+    dir: Math.atan2(P[8][1] - P[5][1], P[8][0] - P[5][0]),
+    q: handQuat(W),
+  };
+}
+
+function trackFrame(){
+  scheduleTrack();
+  if (!HT.landmarker || video.readyState < 2 || video.currentTime === HT.lastVideoT) return;
+  HT.lastVideoT = video.currentTime;
+  const t = performance.now();
+  let res; try { res = HT.landmarker.detectForVideo(video, t); } catch { return; }
+  const lms = res.landmarks || [], wls = res.worldLandmarks || [], hds = res.handedness || res.handednesses || [];
+  const used = new Set(), hands = [];
+  lms.forEach((lm, i) => {
+    let key = hds[i]?.[0]?.categoryName || "Hand"; if (used.has(key)) key += i; used.add(key);
+    let fb = HT.filters[key];
+    if (!fb || t - fb.seen > 400) fb = HT.filters[key] = { s: Array.from({ length: 42 }, () => new OneEuro(1.4, .01)), w: Array.from({ length: 63 }, () => new OneEuro(1.4, 4)) };
+    fb.seen = t;
+    const P = lm.map((p, j) => { const [x, y] = toScreen(p); return [fb.s[j * 2].f(x, t), fb.s[j * 2 + 1].f(y, t)]; });
+    const src = wls[i] || lm;
+    const W = src.map((p, j) => [fb.w[j * 3].f(p.x, t), fb.w[j * 3 + 1].f(p.y, t), fb.w[j * 3 + 2].f(p.z, t)]);
+    hands.push(analyse(key, P, W));
+  });
+  if (hands.length) HT.lastSeen = t;
+  HT.hands = hands;
+
+  for (const h of hands){
+    const st = HT.st[h.key] || (HT.st[h.key] = { on: false, inN: 0, outN: 0, openT: 0, fistT: 0, fistDone: false });
+    // pinch with hysteresis and frame debouncing: quick to grab, slow to drop
+    if (!st.on){ st.inN = h.pinchD < .33 ? st.inN + 1 : 0; if (st.inN >= 2){ st.on = true; st.outN = 0; } }
+    else { st.outN = h.pinchD > .5 ? st.outN + 1 : 0; if (st.outN >= 3){ st.on = false; st.inN = 0; } }
+    h.pinched = st.on; h.st = st;
+  }
+  handleGrab(hands, t);
+}
+
+function handleGrab(hands, t){
+  if (!T3) return;
+  const pinched = hands.filter(h => h.pinched);
+  if (pinched.length >= 2){
+    const [a, b] = pinched, d = d2(a.pt, b.pt);
+    const mid = [(a.pt[0] + b.pt[0]) / 2, (a.pt[1] + b.pt[1]) / 2];
+    const ang = Math.atan2(b.pt[1] - a.pt[1], b.pt[0] - a.pt[0]);
+    if (!HT.two){ HT.two = { d0: d, s0: H3.tscale, a0: ang, q0: H3.tq.clone() }; blip(); }
+    H3.tscale = Math.max(.3, Math.min(4, HT.two.s0 * d / HT.two.d0));
+    H3.tq = qAxis(0, 0, 1, -(ang - HT.two.a0)).multiply(HT.two.q0);
+    const [x, y] = toWorld(mid[0], mid[1]); H3.x += (x - H3.x) * .5; H3.y += (y - H3.y) * .5;
+    H3.grabbed = H3.visible = true; HT.grab = null; HT.lostT = 0;
+    return;
+  }
+  HT.two = null;
+  if (pinched.length === 1){
+    const h = pinched[0], [x, y] = toWorld(h.pt[0], h.pt[1]);
+    if (!HT.grab || HT.grab.key !== h.key){
+      HT.grab = { key: h.key, ox: H3.x - x, oy: H3.y - y, q0: h.q && h.q.clone(), obj0: H3.tq.clone(), t };
+      H3.grabbed = H3.visible = true; blip();
+    }
+    const g = HT.grab, dt = Math.max(.001, (t - g.t) / 1000), nx = x + g.ox, ny = y + g.oy;
+    H3.vx = H3.vx * .6 + ((nx - H3.x) / dt) * .4; H3.vy = H3.vy * .6 + ((ny - H3.y) / dt) * .4;
+    H3.x += (nx - H3.x) * .6; H3.y += (ny - H3.y) * .6;
+    // the object turns exactly the way the hand turns (amplified 1.6x so small wrist turns go further)
+    if (h.q && g.q0) H3.tq = ampQuat(h.q.clone().multiply(g.q0.clone().invert()), 1.6).multiply(g.obj0);
+    g.t = t; HT.lostT = 0;
+    return;
+  }
+  if (HT.grab){
+    const stillVisible = hands.some(h => h.key === HT.grab.key);
+    if (!stillVisible){ if (!HT.lostT) HT.lostT = t; if (t - HT.lostT < 350) return; } // brief tracking dropout: keep holding
+    H3.grabbed = false; HT.grab = null; HT.lostT = 0; tone(900, 600, .1, .03, "triangle");
+  } else if (H3.grabbed && !H3.dragging) H3.grabbed = false;
+}
+
+/* ---------- overlay: hand wireframes only ---------- */
+function fxLoop(now){
+  requestAnimationFrame(fxLoop);
+  const W = innerWidth, H = innerHeight;
+  hctx.clearRect(0, 0, W, H);
+  if (!HT.on) return;
+  for (const h of HT.hands) drawHand(h);
+  if (!HT.hands.length && now - HT.lastSeen > 2500){
+    hctx.font = '13px "Share Tech Mono", Consolas, monospace'; hctx.textAlign = "center";
+    hctx.fillStyle = C(.45 + .3 * Math.sin(now / 300)); hctx.fillText("NO HANDS IN VIEW  ·  RAISE A HAND TO THE CAMERA", W / 2, H - 100); hctx.textAlign = "left";
+  }
+}
+requestAnimationFrame(fxLoop);
+function drawHand(h){
+  const { P } = h;
+  hctx.lineWidth = 2; hctx.strokeStyle = C(h.pinched ? .95 : .6); hctx.shadowColor = C(.9); hctx.shadowBlur = h.pinched ? 14 : 6;
+  hctx.beginPath(); for (const [a, b] of BONES){ hctx.moveTo(P[a][0], P[a][1]); hctx.lineTo(P[b][0], P[b][1]); } hctx.stroke();
+  hctx.fillStyle = C(.9);
+  for (let i = 0; i < 21; i++){ const r = [4, 8, 12, 16, 20].includes(i) ? 4 : 2.2; hctx.beginPath(); hctx.arc(P[i][0], P[i][1], r, 0, Math.PI * 2); hctx.fill(); }
+  hctx.shadowBlur = 0;
+  const r = h.pinched ? 16 : 10 + Math.min(1, h.pinchD) * 20;
+  hctx.strokeStyle = C(h.pinched ? 1 : .5); hctx.lineWidth = h.pinched ? 2.5 : 1.5;
+  hctx.beginPath(); hctx.arc(h.pt[0], h.pt[1], r, 0, Math.PI * 2); hctx.stroke();
+  hctx.font = '11px "Share Tech Mono", Consolas, monospace'; hctx.fillStyle = C(.8);
+  hctx.fillText(h.pinched ? "LOCKED" : "PINCH TO GRAB", h.pt[0] + r + 6, h.pt[1] + 4);
+}
+
+/* ---------- photo -> wireframe hologram ---------- */
+// 1) cut the object out of the photo (MediaPipe interactive segmenter, keypoint at the centre)
+// 2) estimate a rounded 3D volume from the silhouette (distance from the edge) plus surface shading
+// 3) draw it as front and back wireframe grids joined at the rim, in bands that separate in exploded view
+let segmenter = null, lastScan = null, scanning = false;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function getSegmenter(){
+  if (segmenter) return segmenter;
+  sysLine("SCAN", "loading object-isolation model…");
+  const { FilesetResolver, InteractiveSegmenter } = await import(MP + "/vision_bundle.mjs");
+  const files = await FilesetResolver.forVisionTasks(MP + "/wasm");
+  const opts = d => ({ baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/interactive_segmenter/magic_touch/float32/1/magic_touch.tflite", delegate: d }, outputCategoryMask: true, outputConfidenceMasks: false });
+  try { segmenter = await InteractiveSegmenter.createFromOptions(files, opts("GPU")); }
+  catch { segmenter = await InteractiveSegmenter.createFromOptions(files, opts("CPU")); }
+  return segmenter;
+}
+function toCanvas(src, w, h){
+  const sc = Math.min(1, 640 / Math.max(w, h)), c = document.createElement("canvas");
+  c.width = Math.round(w * sc); c.height = Math.round(h * sc);
+  c.getContext("2d").drawImage(src, 0, 0, c.width, c.height); return c;
+}
+
+async function analysePhoto(canvas){
+  let mask = null, mw = 0, mh = 0;
+  try {
+    const seg = await getSegmenter();
+    seg.segment(canvas, { keypoint: { x: .5, y: .5 } }, r => {
+      const m = r.categoryMask; if (m){ mw = m.width; mh = m.height; mask = m.getAsUint8Array().slice(); }
+    });
+  } catch (e){ console.warn("segmenter", e); }
+  let inside;
+  if (mask){
+    const objVal = mask[(mh >> 1) * mw + (mw >> 1)];
+    let n = 0; for (let i = 0; i < mask.length; i++) if (mask[i] === objVal) n++;
+    const cov = n / mask.length;
+    if (cov < .01 || cov > .92) mask = null; else inside = (x, y) => mask[y * mw + x] === objVal;
+  }
+  if (!mask){
+    mw = canvas.width; mh = canvas.height;
+    inside = (x, y) => ((x / mw - .5) / .3) ** 2 + ((y / mh - .5) / .38) ** 2 < 1;
+    sysLine("SCAN", "object edges unclear, using the centre of the frame");
+  }
+  // bounding box of the object
+  let x0 = mw, y0 = mh, x1 = 0, y1 = 0;
+  for (let y = 0; y < mh; y += 2) for (let x = 0; x < mw; x += 2) if (inside(x, y)){ if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  const bw = Math.max(4, x1 - x0), bh = Math.max(4, y1 - y0), M = 64;
+  const GW = bh >= bw ? Math.max(6, Math.round(M * bw / bh)) : M, GH = bh >= bw ? M : Math.max(6, Math.round(M * bh / bw));
+  const pix = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+  const ins = new Uint8Array(GW * GH), lum = new Float32Array(GW * GH), dist = new Float32Array(GW * GH);
+  for (let gy = 0; gy < GH; gy++) for (let gx = 0; gx < GW; gx++){
+    const mx = Math.min(mw - 1, Math.round(x0 + (gx + .5) / GW * bw)), my = Math.min(mh - 1, Math.round(y0 + (gy + .5) / GH * bh));
+    const i = gy * GW + gx; ins[i] = inside(mx, my) ? 1 : 0;
+    const px = Math.min(canvas.width - 1, Math.round(mx * canvas.width / mw)), py = Math.min(canvas.height - 1, Math.round(my * canvas.height / mh)), p = (py * canvas.width + px) * 4;
+    lum[i] = (pix[p] * .299 + pix[p + 1] * .587 + pix[p + 2] * .114) / 255;
+  }
+  // chamfer distance transform: how far each cell is from the object's edge
+  const BIG = 1e6, at = (x, y) => (x < 0 || y < 0 || x >= GW || y >= GH) ? 0 : dist[y * GW + x];
+  for (let i = 0; i < ins.length; i++) dist[i] = ins[i] ? BIG : 0;
+  for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++){ const i = y * GW + x; if (ins[i]) dist[i] = Math.min(dist[i], at(x - 1, y) + 1, at(x, y - 1) + 1, at(x - 1, y - 1) + 1.414, at(x + 1, y - 1) + 1.414); }
+  for (let y = GH - 1; y >= 0; y--) for (let x = GW - 1; x >= 0; x--){ const i = y * GW + x; if (ins[i]) dist[i] = Math.min(dist[i], at(x + 1, y) + 1, at(x, y + 1) + 1, at(x + 1, y + 1) + 1.414, at(x - 1, y + 1) + 1.414); }
+  let maxd = 1; for (const d of dist) if (d > maxd) maxd = d;
+  const dep = dist.map(d => Math.sqrt(d / maxd));   // rounded "pillow" profile
+  return { GW, GH, ins, lum, dep, count: ins.reduce((a, b) => a + b, 0) };
+}
+
+function buildScan(D){
+  clearHolo();
+  const { GW, GH, ins, lum, dep } = D, G = T3;
+  const Hh = 2.6, cell = Hh / GH, Ww = GW * cell, thick = Math.min(Ww, Hh) * .28;
+  const X = gx => (gx - (GW - 1) / 2) * cell, Y = gy => -(gy - (GH - 1) / 2) * cell;
+  const idx = (x, y) => y * GW + x, inn = (x, y) => x >= 0 && y >= 0 && x < GW && y < GH && ins[idx(x, y)] === 1;
+  const Z = (i, s) => s > 0 ? dep[i] * thick + (lum[i] - .5) * cell * 1.5 : -dep[i] * thick;
+  const bands = 5, bandOf = gy => Math.min(bands - 1, Math.floor(gy / GH * bands));
+  const segs = Array.from({ length: bands }, () => []), rim = Array.from({ length: bands }, () => []), pts = Array.from({ length: bands }, () => []);
+  const step = 2;
+  for (const s of [1, -1]){
+    const st = s > 0 ? step : step * 2;
+    for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++){
+      if (!inn(x, y)) continue; const i = idx(x, y), b = bandOf(y);
+      if (y % st === 0 && inn(x + 1, y)) segs[b].push(X(x), Y(y), Z(i, s), X(x + 1), Y(y), Z(idx(x + 1, y), s));
+      if (x % st === 0 && inn(x, y + 1)) segs[b].push(X(x), Y(y), Z(i, s), X(x), Y(y + 1), Z(idx(x, y + 1), s));
+      if (s > 0 && x % step === 0 && y % step === 0) pts[b].push(X(x), Y(y), Z(i, s));
+    }
+  }
+  // silhouette rim, plus ribs joining front and back
+  const edge = (x, y) => inn(x, y) && (!inn(x + 1, y) || !inn(x - 1, y) || !inn(x, y + 1) || !inn(x, y - 1));
+  for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++){
+    if (!edge(x, y)) continue; const i = idx(x, y), b = bandOf(y);
+    for (const [dx, dy] of [[1, 0], [0, 1], [1, 1], [-1, 1]]) if (edge(x + dx, y + dy)) rim[b].push(X(x), Y(y), 0, X(x + dx), Y(y + dy), 0);
+    if ((x + y) % 3 === 0) segs[b].push(X(x), Y(y), Z(i, 1), X(x), Y(y), Z(i, -1));
+  }
+  for (let b = 0; b < bands; b++){
+    const g = new G.Group();
+    const mk = (arr, o, kind) => { if (!arr.length) return; const geo = new G.BufferGeometry(); geo.setAttribute("position", new G.Float32BufferAttribute(arr, 3)); g.add(kind === "pts" ? new G.Points(geo, mat("pts", o)) : new G.LineSegments(geo, mat("line", o))); };
+    mk(segs[b], .55); mk(rim[b], 1); mk(pts[b], .5, "pts");
+    holo.add(g);
+    const cyn = ((b + .5) / bands - .5) * 2;
+    addExp(g, new G.Vector3(0, -cyn, b % 2 ? .7 : -.7), 1.1);
+  }
+  const R = Math.max(Ww, thick * 2) / 2 + .35;
+  part(holo, new G.RingGeometry(R, R + .08, 64), 0, -Hh / 2 - .15, 0, 0, .25).rotation.x = -Math.PI / 2;
+  H3.dims = { w: Math.max(Ww, thick * 2) + 1, h: Hh + .8 };
+}
+function showScan(D){
+  if (!renderer) return;
+  buildScan(D); lastScan = D; H3.content = "scan"; H3.appear = 0; H3.visible = true; resetHolo();
+}
+
+async function processPhoto(canvas){
+  setMode("thinking"); sysLine("SCAN", "isolating object…");
+  try {
+    const D = await analysePhoto(canvas);
+    sysLine("SCAN", `building wireframe from ${D.count} sample points`);
+    showScan(D); chime(); setMode("idle");
+    respond(`Scan complete, ${S.address}. Say exploded view to take it apart, or show the suits to go back.`);
+  } catch (e){ setMode("idle"); addMsg("err", "The scan failed. Try again with the object in the middle of the frame and a plain background."); console.warn(e); }
+}
+
+async function startScan(){
+  if (scanning) return; scanning = true;
+  const box = $("#scanBox");
+  try {
+    if (!HT.stream) await startHands();
+    if (!HT.stream || video.readyState < 2) throw new Error("The camera isn't available. Use Upload to scan a photo instead.");
+    getSegmenter().catch(() => {});   // start loading the model during the countdown
+    const cv = $("#scanCv"), cx = cv.getContext("2d"), cnt = $("#scanCount");
+    cv.width = 320; cv.height = Math.round(320 * video.videoHeight / video.videoWidth) || 240;
+    box.hidden = false; let live = true;
+    const draw = () => {
+      if (!live) return;
+      cx.save(); if (HT.mirror){ cx.scale(-1, 1); cx.drawImage(video, -cv.width, 0, cv.width, cv.height); } else cx.drawImage(video, 0, 0, cv.width, cv.height); cx.restore();
+      const w = cv.width * .42, h = cv.height * .6, l = 16, x = (cv.width - w) / 2, y = (cv.height - h) / 2;
+      cx.strokeStyle = C(.95); cx.lineWidth = 2; cx.beginPath();
+      for (const [px, py, sx, sy] of [[x, y, 1, 1], [x + w, y, -1, 1], [x, y + h, 1, -1], [x + w, y + h, -1, -1]]){ cx.moveTo(px + sx * l, py); cx.lineTo(px, py); cx.lineTo(px, py + sy * l); }
+      cx.moveTo(cv.width / 2 - 8, cv.height / 2); cx.lineTo(cv.width / 2 + 8, cv.height / 2); cx.moveTo(cv.width / 2, cv.height / 2 - 8); cx.lineTo(cv.width / 2, cv.height / 2 + 8);
+      cx.stroke(); requestAnimationFrame(draw);
+    };
+    draw();
+    for (let n = 3; n > 0; n--){ cnt.textContent = n; blip(); await sleep(850); }
+    const shot = toCanvas(video, video.videoWidth, video.videoHeight);
+    live = false; box.hidden = true;
+    tone(2400, 900, .09, .05, "square"); sysLine("SCAN", "image captured");
+    await processPhoto(shot);
+  } catch (e){ addMsg("err", e.message || "The scan failed."); }
+  finally { scanning = false; box.hidden = true; }
+}
+$("#scanBtn").addEventListener("click", startScan);
+$("#upBtn").addEventListener("click", () => $("#photoIn").click());
+$("#photoIn").addEventListener("change", e => {
+  const f = e.target.files && e.target.files[0]; e.target.value = ""; if (!f) return;
+  const img = new Image();
+  img.onload = () => { const c = toCanvas(img, img.naturalWidth, img.naturalHeight); URL.revokeObjectURL(img.src); sysLine("SCAN", "photo loaded: " + f.name); processPhoto(c); };
+  img.onerror = () => addMsg("err", "That file couldn't be read as an image. Try a JPG or PNG.");
+  img.src = URL.createObjectURL(f);
+});
+
+/* ---------- phone + AR mode: back camera, hologram floats over the real world ---------- */
+if (matchMedia("(pointer:coarse)").matches || /[?&]ar\b/.test(location.search)) document.body.classList.add("phone");
+const arExplode = $("#arExplode");
+async function enterAR(){
+  if (inAR()) return;
+  document.body.classList.add("ar");
+  H3.visible = true; resetHolo();
+  await startHands("environment");
+  if (!HT.on) exitAR(false);   // camera refused: startHands already posted the reason to the comms log
+}
+function exitAR(restart = true){
+  document.body.classList.remove("ar");
+  H3.texplode = 0; arExplode.setAttribute("aria-pressed", "false");
+  resetHolo();
+  if (restart) startHands("user"); else { HT.facing = "user"; HT.mirror = true; }
+}
+$("#arBtn").addEventListener("click", enterAR);
+$("#arExit").addEventListener("click", () => exitAR(true));
+$("#arReset").addEventListener("click", () => { H3.texplode = 0; arExplode.setAttribute("aria-pressed", "false"); resetHolo(); });
+arExplode.addEventListener("click", () => { const on = H3.texplode < .5; H3.texplode = on ? 1 : 0; arExplode.setAttribute("aria-pressed", String(on)); });
+$("#arScan").addEventListener("click", startScan);
+
+// finger fallback while in AR: one finger drags, two fingers resize
+(() => {
+  const el = $("#arTouch"), pts = new Map(); let pinch = null;
+  const two = () => { const [a, b] = [...pts.values()]; return Math.hypot(a[0] - b[0], a[1] - b[1]) || 1; };
+  el.addEventListener("pointerdown", e => {
+    if (!renderer) return; el.setPointerCapture(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]);
+    H3.grabbed = H3.dragging = true;
+    if (pts.size === 2) pinch = { d: two(), s: H3.tscale };
+  });
+  el.addEventListener("pointermove", e => {
+    const prev = pts.get(e.pointerId); if (!prev) return;
+    pts.set(e.pointerId, [e.clientX, e.clientY]);
+    if (pts.size >= 2){ if (pinch) H3.tscale = Math.max(.3, Math.min(4, pinch.s * two() / pinch.d)); return; }
+    const [x, y] = toWorld(e.clientX, e.clientY);
+    H3.vx = (x - H3.x) * 30; H3.vy = (y - H3.y) * 30; H3.x = x; H3.y = y;
+    H3.tq.premultiply(qAxis(0, 1, 0, (e.clientX - prev[0]) * .01)).premultiply(qAxis(1, 0, 0, (e.clientY - prev[1]) * .01));
+  });
+  const up = e => {
+    pts.delete(e.pointerId); if (pts.size < 2) pinch = null;
+    if (!pts.size) H3.grabbed = H3.dragging = false;
+  };
+  el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up);
+})();
+
+/* ---------- boot sequence ---------- */
+$("#bootBtn").addEventListener("click", async () => {
+  try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch {}
+  tone(80, 420, 1.6, .07, "sawtooth"); setTimeout(() => tone(600, 1600, .5, .04), 900);
+  if (synth){ const w = new SpeechSynthesisUtterance(" "); w.volume = 0; synth.speak(w); } // unlock audio
+  $("#boot").hidden = true;
+  initRec();
+  const brain = initBrain();
+  const steps = [["CORE", "arc reactor output stable"], ["MEMORY", "personality matrix loaded"], ["AUDIO OUT", synth ? "speech synthesis online" : "unavailable in this browser"], ["AUDIO IN", SR ? "speech recognition ready" : "unsupported, typed commands only"]];
+  for (let i = 0; i < steps.length; i++){ await new Promise(r => setTimeout(r, 380)); blip(); sysLine(steps[i][0], steps[i][1]); }
+  await brain;
+  sysLine("UPLINK", S.brain === "claude" ? "conversational intelligence online" : "offline, local functions only");
+  const hello = `${greeting()}, ${S.address}. All systems are online. How may I help?`;
+  respond(hello);
+  if (rec) startListening();
+  H3.visible = true; startHands();
+  $("#cmd").focus({ preventScroll: true });
+});
+})();
+</script>
+
+</body></html>
